@@ -1,0 +1,180 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# VUS Analysis — Google Colab Notebook\n",
+    "\n",
+    "This notebook runs the complete VUS analysis from the paper.\n",
+    "**No installation needed beyond this cell.**\n",
+    "\n",
+    "## Instructions\n",
+    "1. Upload the `CAD_VUS_Analysis_Final.zip` file when prompted (Cell 1)\n",
+    "2. Run all cells in order (Runtime → Run all)\n",
+    "3. Figures and results appear inline and are saved to `outputs/`"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# ── Cell 1: Upload and unzip the repository ──────────────────────────────────\n",
+    "from google.colab import files\n",
+    "import zipfile, os, sys\n",
+    "\n",
+    "print('Please upload CAD_VUS_Analysis_Final.zip ...')\n",
+    "uploaded = files.upload()\n",
+    "\n",
+    "zip_name = list(uploaded.keys())[0]\n",
+    "with zipfile.ZipFile(zip_name, 'r') as z:\n",
+    "    z.extractall('.')\n",
+    "\n",
+    "# Find the repo root (the extracted folder)\n",
+    "repo = 'vus_repo_final'\n",
+    "sys.path.insert(0, os.path.join(repo, 'src'))\n",
+    "os.makedirs(os.path.join(repo, 'outputs'), exist_ok=True)\n",
+    "print(f'Repository ready: {repo}/')\n",
+    "print('Files:', sorted(os.listdir(repo)))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# ── Cell 2: Install dependencies (already available in Colab) ────────────────\n",
+    "# numpy, pandas, scipy, scikit-learn, matplotlib are all pre-installed in Colab\n",
+    "# This cell just confirms everything is present\n",
+    "import numpy, pandas, scipy, sklearn, matplotlib\n",
+    "print('numpy:', numpy.__version__)\n",
+    "print('pandas:', pandas.__version__)\n",
+    "print('scipy:', scipy.__version__)\n",
+    "print('sklearn:', sklearn.__version__)\n",
+    "print('matplotlib:', matplotlib.__version__)\n",
+    "print('All dependencies OK')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# ── Cell 3: Run the simulations (produces results.json) ──────────────────────\n",
+    "# This takes about 5-10 minutes with 1000 bootstrap draws.\n",
+    "# Reduce N_BOOT below for a quick test (try 100 first).\n",
+    "import subprocess, sys\n",
+    "result = subprocess.run(\n",
+    "    [sys.executable, os.path.join(repo, 'src', 'run_simulations.py')],\n",
+    "    capture_output=True, text=True\n",
+    ")\n",
+    "print(result.stdout[-3000:])   # show last 3000 chars of output\n",
+    "if result.returncode != 0:\n",
+    "    print('ERRORS:', result.stderr[-1000:])"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# ── Cell 4: Generate all figures ─────────────────────────────────────────────\n",
+    "import matplotlib\n",
+    "matplotlib.use('Agg')   # non-interactive backend for Colab\n",
+    "import matplotlib.pyplot as plt\n",
+    "\n",
+    "result2 = subprocess.run(\n",
+    "    [sys.executable, os.path.join(repo, 'src', 'make_figures.py')],\n",
+    "    capture_output=True, text=True\n",
+    ")\n",
+    "print(result2.stdout)\n",
+    "if result2.returncode != 0:\n",
+    "    print('ERRORS:', result2.stderr[-1000:])"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# ── Cell 5: Display all figures inline ───────────────────────────────────────\n",
+    "from IPython.display import Image, display\n",
+    "import glob\n",
+    "\n",
+    "figs = sorted(glob.glob(os.path.join(repo, 'outputs', 'fig*.png')))\n",
+    "for f in figs:\n",
+    "    print(f'\\n--- {os.path.basename(f)} ---')\n",
+    "    display(Image(f, width=900))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# ── Cell 6: Print results summary ────────────────────────────────────────────\n",
+    "import json\n",
+    "R = json.load(open(os.path.join(repo, 'outputs', 'results.json')))\n",
+    "s1 = R['sim1']; s2 = R['sim2']\n",
+    "\n",
+    "def fmt(m, lo, hi, pct=False):\n",
+    "    if m is None: return 'n/e'\n",
+    "    if pct: return f'{m*100:.1f}% [{lo*100:.1f}%, {hi*100:.1f}%]'\n",
+    "    return f'{m:.3f} [{lo:.3f}, {hi:.3f}]'\n",
+    "\n",
+    "print('='*60)\n",
+    "print('SIMULATION 1: PAIRED COMPARISON')\n",
+    "print('='*60)\n",
+    "print(f'  Naive AUC T1: {s1[\"nauc1\"]:.3f}  T2: {s1[\"nauc2\"]:.3f}')\n",
+    "print(f'  Global VUS T1: {fmt(s1[\"vus1\"],s1[\"vus1_lo\"],s1[\"vus1_hi\"])}')\n",
+    "print(f'  Global VUS T2: {fmt(s1[\"vus2\"],s1[\"vus2_lo\"],s1[\"vus2_hi\"])}')\n",
+    "print(f'  ΔVUS:          {fmt(s1[\"dvus\"],s1[\"dvus_lo\"],s1[\"dvus_hi\"])}  P(T1>T2)={s1[\"p_vus1_gt\"]:.3f}')\n",
+    "print(f'  SGI T1:        {fmt(s1[\"sgi1\"],s1[\"sgi1_lo\"],s1[\"sgi1_hi\"],pct=True)}')\n",
+    "print()\n",
+    "print('='*60)\n",
+    "print('SIMULATION 2: UNPAIRED (COVERAGE-GATED)')\n",
+    "print('='*60)\n",
+    "print(f'  Naive AUC TA: {s2[\"naucA\"]:.3f}  TB: {s2[\"naucB\"]:.3f}')\n",
+    "print(f'  Global VUS TA: {fmt(s2[\"vusA\"],s2[\"vusA_lo\"],s2[\"vusA_hi\"])}')\n",
+    "print(f'  Global VUS TB: n/e  (coverage < 50%)')\n",
+    "print(f'  MVF TA: {fmt(s2[\"mvfA\"],s2[\"mvfA_lo\"],s2[\"mvfA_hi\"],pct=True)}')\n",
+    "print(f'  MVF TB: {fmt(s2[\"mvfB\"],s2[\"mvfB_lo\"],s2[\"mvfB_hi\"],pct=True)}')\n",
+    "lbl_sev = 'Severe (\\u226533)'\n",
+    "pvA = s2['pvusA'][2]; pvB = s2['pvusB'][2]; dp = s2['dpvusAB'][2]\n",
+    "print(f'  PVUS severe TA: {fmt(*pvA)}')\n",
+    "print(f'  PVUS severe TB: {fmt(*pvB)}')\n",
+    "print(f'  ΔPVUS severe:   {fmt(*dp[:3])}  P(A>B)={s2[\"p_pvusA_gt\"][2]:.3f}')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# ── Cell 7: Download all outputs as a zip ────────────────────────────────────\n",
+    "import shutil\n",
+    "shutil.make_archive('VUS_outputs', 'zip', os.path.join(repo, 'outputs'))\n",
+    "files.download('VUS_outputs.zip')\n",
+    "print('Downloaded VUS_outputs.zip')"
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {"name": "python", "version": "3.10.0"}
+ },
+ "nbformat": 4,
+ "nbformat_minor": 4
+}

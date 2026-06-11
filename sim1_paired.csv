@@ -1,0 +1,154 @@
+"""
+run_example.py
+--------------
+End-to-end demonstration of the VUS analysis pipeline.
+
+Runs both simulations from the paper and saves all results and figures.
+
+Usage
+-----
+    python run_example.py
+
+Outputs saved to outputs/
+"""
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+
+import numpy as np
+import pandas as pd
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import json, math
+
+from vus_analysis import (
+    VUSAnalysis, hanley_mcneil_ci, compute_auc_s,
+    compute_vus, compute_pvus, compute_sgi,
+    fit_binormal_surface, make_pvus_bounds,
+    DEFAULT_PVUS_LABELS
+)
+
+os.makedirs('outputs', exist_ok=True)
+
+# ── Configuration ──────────────────────────────────────────────────────────────
+SCORE_COL    = 'test_score'
+SCORE_COL_2  = 'test_score_2'
+DISEASE_COL  = 'disease_status'
+SEVERITY_COL = 'syntax_score'
+SEV_MIN      = 0.0
+SEV_MAX      = 60.0
+N_BOOT       = 1000
+SEED         = 42
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SIMULATION 1: Paired comparison
+# ══════════════════════════════════════════════════════════════════════════════
+print('\n' + '='*60)
+print('SIMULATION 1: Paired comparison')
+print('='*60)
+
+df_paired = pd.read_csv('data/sim1_paired.csv')
+print(f'  n = {len(df_paired)} patients')
+
+analysis1 = VUSAnalysis(
+    data         = df_paired,
+    score_col    = SCORE_COL,
+    disease_col  = DISEASE_COL,
+    severity_col = SEVERITY_COL,
+    severity_min = SEV_MIN,
+    severity_max = SEV_MAX,
+    score_col_2  = SCORE_COL_2,
+    n_boot       = N_BOOT,
+    random_seed  = SEED,
+    verbose      = True,
+)
+result1 = analysis1.run()
+result1.summary()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SIMULATION 2: Unpaired, coverage-gated
+# ══════════════════════════════════════════════════════════════════════════════
+print('\n' + '='*60)
+print('SIMULATION 2: Unpaired (Test A full spectrum, Test B severe only)')
+print('='*60)
+
+dfA = pd.read_csv('data/sim2_testA_full_spectrum.csv')
+dfB = pd.read_csv('data/sim2_testB_severe_only.csv')
+print(f'  Test A: n={len(dfA)},  SYNTAX {dfA[SEVERITY_COL].min():.0f}'
+      f'\u2013{dfA[SEVERITY_COL].max():.0f}')
+print(f'  Test B: n={len(dfB)},  SYNTAX {dfB[SEVERITY_COL].min():.0f}'
+      f'\u2013{dfB[SEVERITY_COL].max():.0f}')
+
+analysisA = VUSAnalysis(
+    data=dfA, score_col=SCORE_COL, disease_col=DISEASE_COL,
+    severity_col=SEVERITY_COL, severity_min=SEV_MIN, severity_max=SEV_MAX,
+    n_boot=N_BOOT, random_seed=SEED, verbose=True,
+)
+analysisB = VUSAnalysis(
+    data=dfB, score_col=SCORE_COL, disease_col=DISEASE_COL,
+    severity_col=SEVERITY_COL, severity_min=SEV_MIN, severity_max=SEV_MAX,
+    n_boot=N_BOOT, random_seed=SEED+1, verbose=True,
+)
+resultA = analysisA.run()
+resultB = analysisB.run()
+resultA.summary()
+resultB.summary()
+
+# Cross-study region ΔPVUS
+print('\nCoverage-gated region comparison (A vs B):')
+from vus_analysis import delta_pci, p_greater
+for j, lbl in enumerate(DEFAULT_PVUS_LABELS):
+    bA = analysisA._bootstrap.__func__  # already run — use saved boot
+    pvA = resultA.pvus1_ci[j]
+    pvB = resultB.pvus1_ci[j]
+    # Reuse boot draws from results
+    bootA = [x for x in resultA.boot1['pvus'][j] if x is not None]
+    bootB = [x for x in resultB.boot1['pvus'][j] if x is not None]
+    dm, dl, dh, _ = delta_pci(bootA, bootB)
+    pp = p_greater(bootA, bootB)
+    from vus_analysis import VUSResult
+    fA = VUSResult._fmt(pvA[0], pvA[1], pvA[2])
+    fB = VUSResult._fmt(pvB[0], pvB[1], pvB[2])
+    fd = VUSResult._fmt(dm, dl, dh) if dm is not None and not math.isnan(dm) else 'n/e'
+    fp = f'{pp:.3f}' if pp is not None and not math.isnan(pp) else 'n/e'
+    print(f'  {lbl}:  A={fA}  B={fB}  dPVUS={fd}  P(A>B)={fp}')
+
+# ── Save results ───────────────────────────────────────────────────────────────
+def clean(obj):
+    if isinstance(obj, (float, np.floating)):
+        v = float(obj); return None if (math.isnan(v) or math.isinf(v)) else v
+    if isinstance(obj, np.integer): return int(obj)
+    if isinstance(obj, np.ndarray): return obj.tolist()
+    if isinstance(obj, list): return [clean(x) for x in obj]
+    if isinstance(obj, dict): return {k: clean(v) for k, v in obj.items()}
+    return obj
+
+out = clean({
+    'sim1': {
+        'naive_auc_1': result1.naive1,
+        'naive_auc_2': result1.naive2,
+        'vus1': result1.vus1, 'vus2': result1.vus2,
+        'dvus': result1.dvus, 'p_1gt2': result1.p_1gt2,
+        'pvus1': result1.pvus1_ci, 'pvus2': result1.pvus2_ci,
+        'dpvus': result1.dpvus_ci, 'p_pvus': result1.p_pvus,
+        'sgi1': result1.sgi1, 'sgi2': result1.sgi2,
+        'mvf1': result1.mvf1, 'icv1': result1.icv1,
+        'vus_msg1': result1.vus_msg1, 'vus_msg2': result1.vus_msg2,
+    },
+    'sim2_A': {
+        'naive_auc': resultA.naive1,
+        'vus': resultA.vus1, 'pvus': resultA.pvus1_ci,
+        'sgi': resultA.sgi1, 'mvf': resultA.mvf1, 'icv': resultA.icv1,
+        'vus_msg': resultA.vus_msg1,
+    },
+    'sim2_B': {
+        'naive_auc': resultB.naive1,
+        'vus': resultB.vus1, 'pvus': resultB.pvus1_ci,
+        'sgi': resultB.sgi1, 'mvf': resultB.mvf1, 'icv': resultB.icv1,
+        'vus_msg': resultB.vus_msg1,
+    },
+})
+with open('outputs/results.json', 'w') as f:
+    json.dump(out, f, indent=2)
+print('\nResults saved to outputs/results.json')
+print('Run src/make_figures.py to generate all figures.')
